@@ -8,9 +8,19 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).parents[1]
 INSTALLER = REPOSITORY_ROOT / "rpi" / "installer.sh"
+KLIPPER_INSTALLER = REPOSITORY_ROOT / "rpi" / "install-klipper.sh"
 
 
 class RpiLoadcellsZOffsetTest(unittest.TestCase):
+    def extract_klipper_installer_function(self, name):
+        installer = KLIPPER_INSTALLER.read_text()
+        marker = f"function {name}()"
+        self.assertIn(marker, installer, f"Klipper installer must define {name}")
+        start = installer.index(marker)
+        end = installer.find("\nfunction ", start + len(marker))
+        self.assertNotEqual(end, -1, f"{name} must end before the next function")
+        return installer[start:end]
+
     def extract_function(self, name):
         installer = INSTALLER.read_text()
         marker = f"function {name}()"
@@ -90,6 +100,34 @@ class RpiLoadcellsZOffsetTest(unittest.TestCase):
         self.assertIn(
             "--file bltouch.cfg --replace-section-entry bed_mesh zero_reference_position 20,25",
             helper_calls,
+        )
+
+    def test_kalico_install_uses_secondary_probe_capable_rpi_fork(self):
+        resolver = self.extract_klipper_installer_function(
+            "klipper_repository_url"
+        )
+        runner = (
+            "#!/bin/bash\n"
+            f"{resolver}\n"
+            "klipper_repository_url kalico\n"
+            "klipper_repository_url klipper\n"
+        )
+        shell = "sh" if os.name == "nt" else "bash"
+        result = subprocess.run(
+            [shell],
+            input=runner,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            [
+                "https://github.com/kylemd/kalico-rpi.git",
+                "https://github.com/pellcorp/klipper-rpi.git",
+            ],
         )
 
     def test_existing_setup_is_unchanged(self):

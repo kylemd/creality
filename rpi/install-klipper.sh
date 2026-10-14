@@ -12,6 +12,14 @@ KLIPPER_USER=$USER
 KLIPPER_GROUP=$KLIPPER_USER
 
 # taken from https://github.com/pellcorp/klipper-rpi/blob/master/scripts/install-ubuntu-22.04.sh
+function klipper_repository_url() {
+  if [ "$1" = "kalico" ]; then
+    echo "https://github.com/kylemd/kalico-rpi.git"
+  else
+    echo "https://github.com/pellcorp/${1}-rpi.git"
+  fi
+}
+
 function install_packages() {
   # Packages for python cffi
   PKGLIST="virtualenv python3-dev libffi-dev build-essential"
@@ -111,7 +119,8 @@ if [ $? -ne 0 ]; then
     echo
     echo "INFO: Installing ${KLIPPER_FORK} ..."
 
-    git clone https://github.com/pellcorp/${KLIPPER_FORK}-rpi.git $BASEDIR/klipper || exit $?
+    klipper_repository=$(klipper_repository_url "$KLIPPER_FORK")
+    git clone "$klipper_repository" $BASEDIR/klipper || exit $?
 
     # force recreate of the klippy-env if we are switching klipper forks
     if [ -d $BASEDIR/klippy-env ]; then
