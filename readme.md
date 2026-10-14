@@ -17,7 +17,7 @@ The Python tests use the standard library's `unittest` framework. From the repos
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install packages/ConfigUpdater-3.2-py2.py3-none-any.whl
+.venv/bin/pip install Jinja2 packages/ConfigUpdater-3.2-py2.py3-none-any.whl
 ```
 
 Run the tests with:
