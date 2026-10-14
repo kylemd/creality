@@ -775,6 +775,108 @@ function setup_btteddy() {
     return 0
 }
 
+function normalize_model() {
+    echo "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+function loadcells_zoffset_is_enabled() {
+    [ -f "$BASEDIR/pellcorp.done" ] && grep -qx "loadcells-zoffset" "$BASEDIR/pellcorp.done"
+}
+
+function validate_loadcells_zoffset() {
+    local probe=$1
+    local model=$(normalize_model "$2")
+    local klipper_fork=$3
+
+    if [ -z "$probe" ] || [ "$probe" = "none" ]; then
+        echo "ERROR: loadcells for z-offset requires a primary probe"
+        return 1
+    elif [ "$probe" = "loadcells" ]; then
+        echo "ERROR: --loadcells-zoffset is not needed for the loadcells probe"
+        return 1
+    elif [ ! -f "$BASEDIR/pellcorp/k1/patches/loadcells_zoffset.cfg.${model}" ]; then
+        echo "FATAL: Loadcells for z-offset is not supported for your printer ($model)"
+        return 1
+    elif [ "$klipper_fork" != "kalico" ]; then
+        echo "ERROR: loadcells for z-offset requires kalico, use --kalico"
+        return 1
+    fi
+    return 0
+}
+
+function setup_loadcells_zoffset() {
+    local probe=$1
+
+    grep -q "loadcells-zoffset" $BASEDIR/pellcorp.done
+    if [ $? -ne 0 ]; then
+        echo
+        echo "INFO: Setting up loadcells for z-offset ..."
+
+        cp $BASEDIR/pellcorp/config/loadcells_zoffset.cfg $BASEDIR/printer_data/config/ || exit $?
+        $CONFIG_HELPER --file loadcells_zoffset.cfg --patches "$BASEDIR/pellcorp/k1/patches/loadcells_zoffset.cfg.${model}" --quiet || exit $?
+        $CONFIG_HELPER --add-include "loadcells_zoffset.cfg" || exit $?
+
+        # btteddy_zoffset.cfg and loadcells_zoffset.cfg both set the z-offset
+        $CONFIG_HELPER --remove-include "btteddy_zoffset.cfg" || exit $?
+
+        $CONFIG_HELPER --remove-section "load_cell_probe" || exit $?
+        $CONFIG_HELPER --add-section "load_cell_probe" || exit $?
+        z_offset=$($CONFIG_HELPER --ignore-missing --file $BASEDIR/pellcorp-overrides/printer.cfg.save_config --get-section-entry load_cell_probe z_offset)
+        if [ -n "$z_offset" ]; then
+          $CONFIG_HELPER --replace-section-entry "load_cell_probe" "# z_offset" "0.0" || exit $?
+        else
+          $CONFIG_HELPER --replace-section-entry "load_cell_probe" "z_offset" "0.0" || exit $?
+        fi
+
+        # the load cell probe is done at the zero reference position, cartotouch, cartographer and beacon already define it
+        if [ "$probe" = "bltouch" ] || [ "$probe" = "microprobe" ] || [ "$probe" = "btteddy" ] || [ "$probe" = "eddyng" ] || [ "$probe" = "klicky" ]; then
+            if [ "$model" = "f005" ] || [ "$model" = "e3v3se" ]; then
+                zero_reference_position="20,25"
+            else
+                y_position_mid=$($CONFIG_HELPER --get-section-entry "stepper_y" "position_max" --divisor 2 --integer)
+                x_position_mid=$($CONFIG_HELPER --get-section-entry "stepper_x" "position_max" --divisor 2 --integer)
+                zero_reference_position="$x_position_mid,$y_position_mid"
+            fi
+            $CONFIG_HELPER --file ${probe}.cfg --replace-section-entry "bed_mesh" "zero_reference_position" "$zero_reference_position" || exit $?
+        fi
+
+        echo "loadcells-zoffset" >> $BASEDIR/pellcorp.done
+        sync
+
+        # means klipper needs to be restarted
+        return 1
+    fi
+    return 0
+}
+
+function activate_loadcells_zoffset() {
+    local probe=$1
+    local model=$(normalize_model "$2")
+    local klipper_fork=$3
+    local create_backup=$4
+
+    validate_loadcells_zoffset "$probe" "$model" "$klipper_fork" || return 2
+
+    if [ "$create_backup" = "true" ]; then
+        mkdir -p $BASEDIR/backups
+        TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S") $BASEDIR/pellcorp/tools/backups.sh --create || return 2
+    fi
+
+    setup_loadcells_zoffset "$probe"
+    local changed=$?
+
+    if [ "$create_backup" = "true" ] && [ $changed -ne 0 ]; then
+        mkdir -p $BASEDIR/pellcorp-backups
+        for file in printer.cfg loadcells_zoffset.cfg ${probe}.cfg; do
+            if [ -f $BASEDIR/printer_data/config/$file ]; then
+                cp $BASEDIR/printer_data/config/$file $BASEDIR/pellcorp-backups/$file || return 2
+            fi
+        done
+    fi
+
+    return $changed
+}
+
 function set_serial_eddyng() {
     local SERIAL_ID=$(ls /dev/serial/by-id/usb-Klipper_rp2040* | head -1)
     if [ -n "$SERIAL_ID" ]; then
@@ -1078,6 +1180,33 @@ elif [ "$1" = "--klipper-repo" ] || [ "$1" = "--kalico" ] || [ "$1" = "--klipper
       echo "Error invalid klipper repo specified"
       exit 1
   fi
+elif [ "$1" = "--loadcells-zoffset" ]; then
+    if [ ! -f $BASEDIR/pellcorp.done ]; then
+      echo "ERROR: No installation found - try putting $1 last on the command line if this is a new install!"
+      exit 1
+    fi
+
+    model=unspecified
+    if [ -f $BASEDIR/pellcorp-backups/printer.factory.cfg ]; then
+      model=$(cat $BASEDIR/pellcorp-backups/printer.factory.cfg | grep MODEL: | awk -F ':' '{print $2}')
+      model=$(normalize_model "$model")
+    fi
+
+    probe=$(cat $BASEDIR/pellcorp.done | grep "\-probe" | awk -F '-' '{print $1}')
+    klipper_fork=klipper
+    if git -C $BASEDIR/klipper/ remote get-url origin 2> /dev/null | grep -q kalico; then
+        klipper_fork=kalico
+    fi
+
+    activate_loadcells_zoffset "$probe" "$model" "$klipper_fork" true
+    loadcells_zoffset_status=$?
+    if [ $loadcells_zoffset_status -eq 2 ]; then
+        exit 1
+    elif [ $loadcells_zoffset_status -ne 0 ]; then
+        echo "INFO: Restarting Klipper ..."
+        sudo systemctl restart klipper
+    fi
+    exit 0
 fi
 
 export TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
@@ -1118,6 +1247,11 @@ set -o pipefail # preserve installer failures through tee
   probe_switch=false
   printer=
   mount=
+  loadcells_zoffset=false
+  loadcells_zoffset_requested=false
+  if loadcells_zoffset_is_enabled; then
+    loadcells_zoffset=true
+  fi
 
   klipper_fork=kalico
   if [ -d $BASEDIR/klipper/.git ]; then
@@ -1165,6 +1299,10 @@ set -o pipefail # preserve installer failures through tee
       fi
     elif [ "$1" = "--kalico" ]; then
       klipper_fork=kalico
+      shift
+    elif [ "$1" = "--loadcells-zoffset" ]; then
+      loadcells_zoffset=true
+      loadcells_zoffset_requested=true
       shift
     elif [ "$1" = "--mount" ]; then
       shift
@@ -1288,7 +1426,7 @@ set -o pipefail # preserve installer failures through tee
       fi
       echo
       exit 1
-    elif [ "$mode" = "update" ] && [ "$PELLCORP_UPDATED_SHA" = "$PELLCORP_GIT_SHA" ] && [ "$probe_switch" != "true" ] && [ "$force" != "true" ] && [ -z "$mount" ]; then
+    elif [ "$mode" = "update" ] && [ "$PELLCORP_UPDATED_SHA" = "$PELLCORP_GIT_SHA" ] && [ "$probe_switch" != "true" ] && [ "$force" != "true" ] && [ -z "$mount" ] && [ "$loadcells_zoffset_requested" != "true" ]; then
       echo
       echo "ERROR: Installation is already up to date - NO CHANGES WERE MADE!"
       echo
@@ -1313,10 +1451,15 @@ set -o pipefail # preserve installer failures through tee
   model=unspecified
   if [ -f $BASEDIR/pellcorp-backups/printer.factory.cfg ]; then
     model=$(cat $BASEDIR/pellcorp-backups/printer.factory.cfg | grep MODEL: | awk -F ':' '{print $2}')
+    model=$(normalize_model "$model")
     # if a printer.cfg is specified without a MODEL we skip mount overrides
     if [ -z "$model" ]; then
       model=unspecified
     fi
+  fi
+
+  if [ "$loadcells_zoffset" = "true" ]; then
+    validate_loadcells_zoffset "$probe" "$model" "$klipper_fork" || exit $?
   fi
 
   # we skip mount overrides for a special unspecified model
@@ -1566,13 +1709,20 @@ set -o pipefail # preserve installer failures through tee
     fi
   fi
 
+  if [ "$loadcells_zoffset" = "true" ]; then
+    activate_loadcells_zoffset "$probe" "$model" "$klipper_fork" false
+    if [ $? -eq 2 ]; then
+      exit 1
+    fi
+  fi
+
   # we are no longer managing diffs with grumpyscreen just the override file
   [ -f $BASEDIR/pellcorp-backups/grumpyscreen.cfg ] && rm $BASEDIR/pellcorp-backups/grumpyscreen.cfg
   [ -f $BASEDIR/pellcorp-backups/grumpyscreen.ini ] && rm $BASEDIR/pellcorp-backups/grumpyscreen.ini
 
   # we want a copy of the file before config overrides are re-applied so we can correctly generate diffs
   # against different generations of the original file
-  for file in printer.cfg start_end.cfg ${probe}.conf spoolman.conf timelapse.conf moonraker.conf crowsnest.conf webcam.conf useful_macros.cfg homing.cfg ${probe}_macro.cfg ${probe}.cfg; do
+  for file in printer.cfg start_end.cfg ${probe}.conf spoolman.conf timelapse.conf moonraker.conf crowsnest.conf webcam.conf useful_macros.cfg homing.cfg loadcells_zoffset.cfg ${probe}_macro.cfg ${probe}.cfg; do
     if [ -f $BASEDIR/printer_data/config/$file ]; then
       cp $BASEDIR/printer_data/config/$file $BASEDIR/pellcorp-backups/$file
     fi
