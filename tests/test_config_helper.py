@@ -1,4 +1,5 @@
 import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -32,6 +33,37 @@ class OverrideCfgTest(unittest.TestCase):
         self.assertFalse(updated)
         self.assertFalse(updater.has_section("missing"))
         self.assertEqual(updater["existing"]["value"].value, "unchanged")
+
+    def test_v3_se_bltouch_mount_sets_m4_screw_adjustment_geometry(self):
+        updater = ConfigUpdater(
+            strict=False,
+            allow_no_value=True,
+            space_around_delimiters=False,
+            delimiters=(":", "="),
+        )
+        updater.read(REPOSITORY_ROOT / "config" / "bltouch.cfg")
+
+        override_source = (
+            REPOSITORY_ROOT / "mounts" / "bltouch" / "Default-e3v3se.overrides"
+        ).read_text()
+        bltouch_patch = override_source.split("-- bltouch.cfg\n", 1)[1]
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".cfg", delete=False) as patch:
+            patch.write(bltouch_patch)
+            patch_path = Path(patch.name)
+
+        try:
+            updated = config_helper.override_cfg(updater, patch_path)
+        finally:
+            patch_path.unlink()
+
+        self.assertTrue(updated)
+        section = updater["screws_tilt_adjust"]
+        self.assertEqual(section["screw1"].value.strip(), "54.5, 45.5")
+        self.assertEqual(section["screw2"].value.strip(), "224.5, 45.5")
+        self.assertEqual(section["screw3"].value.strip(), "224.5, 215.5")
+        self.assertEqual(section["screw4"].value.strip(), "54.5, 215.5")
+        self.assertEqual(section["horizontal_move_z"].value.strip(), "10")
+        self.assertEqual(section["screw_thread"].value.strip(), "CCW-M4")
 
 
 class ReplaceSectionValueTest(unittest.TestCase):
