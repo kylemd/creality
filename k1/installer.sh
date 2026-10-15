@@ -1333,9 +1333,10 @@ function cleanup_probe() {
     fi
     $CONFIG_HELPER --remove-include "$probe.cfg" || exit $?
 
-    # if switching from btt eddy remove this file
-    if [ "$probe" = "btteddy" ] && [ -f /usr/data/printer_data/config/variables.cfg ]; then
-        rm /usr/data/printer_data/config/variables.cfg
+    # if switching from btt eddy remove these files
+    if [ "$probe" = "btteddy" ]; then
+        [ -f /usr/data/printer_data/config/variables.cfg ] && rm /usr/data/printer_data/config/variables.cfg
+        [ -f /usr/data/printer_data/config/btteddy_zoffset.cfg ] && rm /usr/data/printer_data/config/btteddy_zoffset.cfg
     fi
 
     if [ "$probe" = "eddyng" ]; then
@@ -1523,6 +1524,9 @@ function setup_loadcells_zoffset() {
         cp /usr/data/pellcorp/config/loadcells_zoffset.cfg /usr/data/printer_data/config/ || exit $?
         $CONFIG_HELPER --file loadcells_zoffset.cfg --patches /usr/data/pellcorp/k1/patches/loadcells_zoffset.cfg.${model} --quiet || exit $?
         $CONFIG_HELPER --add-include "loadcells_zoffset.cfg" || exit $?
+
+        cp /usr/data/pellcorp/config/loadcells_wipe.cfg /usr/data/printer_data/config/ || exit $?
+        $CONFIG_HELPER --add-include "loadcells_wipe.cfg" || exit $?
 
         # btteddy_zoffset.cfg and loadcells_zoffset.cfg both set the z-offset
         $CONFIG_HELPER --remove-include "btteddy_zoffset.cfg" || exit $?
@@ -1805,6 +1809,13 @@ function setup_btteddy() {
         if [ "$klipper_fork" = "kalico" ]; then
           $CONFIG_HELPER --file btteddy.cfg --remove-section "temperature_probe btt_eddy" || exit $?
           $CONFIG_HELPER --file btteddy_macro.cfg --remove-section "gcode_macro BTTEDDY_TEMPERATURE_PROBE_CALIBRATE" || exit $?
+        else # klipper
+          $CONFIG_HELPER --file btteddy.cfg --remove-section "temperature_sensor btt_eddy" || exit $?
+
+          # we need to update homing.cfg, btteddy.cfg and btteddy_macro.cfg to use temperature_probe btt_eddy for sensors
+          # just with sed cos its easier
+          sed -i 's/temperature_sensor btt_eddy/temperature_probe btt_eddy/g' /usr/data/printer_data/config/homing.cfg
+          sed -i 's/temperature_sensor btt_eddy/temperature_probe btt_eddy/g' /usr/data/printer_data/config/btteddy_macro.cfg
         fi
 
         cp /usr/data/pellcorp/config/btteddy_zoffset.cfg /usr/data/printer_data/config/ || exit $?
@@ -2266,7 +2277,14 @@ fi
     probe_switch=false
     old_probe=
     mount=
+
+    loadcells_zoffset_specified=false
     loadcells_zoffset=false
+    # so if this include exists its like they specified --loadcell-zoffset to the installer
+    # because we should be rerunning the setup loadcells every time so that any updates get applied
+    if $CONFIG_HELPER --include-exists "loadcells_zoffset.cfg"; then
+      loadcells_zoffset=true
+    fi
 
     if [ -f /usr/data/pellcorp.done ]; then
         install_mount=$(cat /usr/data/pellcorp.done | grep "mount=" | awk -F '=' '{print $2}')
@@ -2287,11 +2305,17 @@ fi
             klipper_fork=klipper
             shift
         elif [ "$1" = "--loadcells-zoffset" ]; then
-            loadcells_zoffset=true
+            if [ "$probe" != "loadcells" ]; then
+              loadcells_zoffset_specified=true
+              loadcells_zoffset=true
 
-            # for eddyng and btteddy if they ask for it give it to them
-            klipper_fork=kalico
-            shift
+              # for eddyng and btteddy if they ask for it give it to them
+              klipper_fork=kalico
+              shift
+            else
+              echo "ERROR: --loadcells-zoffset is not needed for the loadcells probe"
+              exit 1
+            fi
         elif [ "$1" = "--probe" ]; then # allow the installer to specify a `--probe` argument for clarity
             shift
         elif [ "$1" = "--printer" ]; then
@@ -2355,6 +2379,12 @@ fi
         fi
     done
 
+    # so if switching probes and the --loadcells-zoffset is not explicity set, we need to ignore the
+    # existence of the loadcells-zoffset.cfg from the current installation
+    if [ "$probe_switch" = "true" ] && [ "$loadcells_zoffset_specified" != "true" ]; then
+      loadcells_zoffset=false
+    fi
+
     if [ "$MODEL" = "NEBULA" ]; then
       if [ -f /usr/data/pellcorp-backups/printer.factory.cfg ]; then
         model=$(cat /usr/data/pellcorp-backups/printer.factory.cfg | grep MODEL: | awk -F ':' '{print $2}')
@@ -2391,6 +2421,9 @@ fi
     fi
 
     if [ "$probe" = "loadcells" ]; then
+        # if switching to loadcells from a probe where we used loadcells-zoffset just ignore
+        loadcells_zoffset=false
+
         # only k1, k1m, e5m, e3v3 are supported
         if [ ! -f /usr/data/pellcorp/k1/patches/loadcells.cfg.${model} ]; then
           echo "FATAL: Loadcells are not supported for your printer ($MODEL)"
@@ -2407,10 +2440,7 @@ fi
     fi
 
     if [ "$loadcells_zoffset" = "true" ]; then
-        if [ "$probe" = "loadcells" ]; then
-            echo "ERROR: --loadcells-zoffset is not needed for the loadcells probe"
-            exit 1
-        elif [ ! -f /usr/data/pellcorp/k1/patches/loadcells_zoffset.cfg.${model} ]; then
+        if [ ! -f /usr/data/pellcorp/k1/patches/loadcells_zoffset.cfg.${model} ]; then
             echo "FATAL: Loadcells for z-offset is not supported for your printer ($MODEL)"
             exit 1
         fi
@@ -2422,7 +2452,11 @@ fi
     fi
 
     echo "INFO: Mode is $mode"
-    echo "INFO: Probe is $probe"
+    if [ "$loadcells_zoffset" = "true" ]; then
+      echo "INFO: Probe is $probe with loadcells for z-offset"
+    else
+      echo "INFO: Probe is $probe"
+    fi
     if [ "$MODEL" = "NEBULA" ]; then
       echo "INFO: Model is $model"
     fi
@@ -2667,6 +2701,7 @@ fi
         # cleanup loadcells z-offset config if it was enabled
         if [ "$probe_switch" = "true" ] && [ -f /usr/data/pellcorp-overrides/printer.cfg ]; then
           $CONFIG_HELPER --file /usr/data/pellcorp-overrides/printer.cfg --remove-include "loadcells_zoffset.cfg" || exit $?
+          $CONFIG_HELPER --file /usr/data/pellcorp-overrides/printer.cfg --remove-include "loadcells_wipe.cfg" || exit $?
           $CONFIG_HELPER --file /usr/data/pellcorp-overrides/printer.cfg --remove-section "load_cell_probe" || exit $?
         fi
     fi
