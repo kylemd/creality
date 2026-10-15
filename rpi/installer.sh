@@ -816,6 +816,9 @@ function setup_loadcells_zoffset() {
         $CONFIG_HELPER --file loadcells_zoffset.cfg --patches "$BASEDIR/pellcorp/k1/patches/loadcells_zoffset.cfg.${model}" --quiet || exit $?
         $CONFIG_HELPER --add-include "loadcells_zoffset.cfg" || exit $?
 
+        cp $BASEDIR/pellcorp/config/loadcells_wipe.cfg $BASEDIR/printer_data/config/ || exit $?
+        $CONFIG_HELPER --add-include "loadcells_wipe.cfg" || exit $?
+
         # btteddy_zoffset.cfg and loadcells_zoffset.cfg both set the z-offset
         $CONFIG_HELPER --remove-include "btteddy_zoffset.cfg" || exit $?
 
@@ -867,7 +870,7 @@ function activate_loadcells_zoffset() {
 
     if [ "$create_backup" = "true" ] && [ $changed -ne 0 ]; then
         mkdir -p $BASEDIR/pellcorp-backups
-        for file in printer.cfg loadcells_zoffset.cfg ${probe}.cfg; do
+        for file in printer.cfg loadcells_zoffset.cfg loadcells_wipe.cfg ${probe}.cfg; do
             if [ -f $BASEDIR/printer_data/config/$file ]; then
                 cp $BASEDIR/printer_data/config/$file $BASEDIR/pellcorp-backups/$file || return 2
             fi
@@ -1722,7 +1725,7 @@ set -o pipefail # preserve installer failures through tee
 
   # we want a copy of the file before config overrides are re-applied so we can correctly generate diffs
   # against different generations of the original file
-  for file in printer.cfg start_end.cfg ${probe}.conf spoolman.conf timelapse.conf moonraker.conf crowsnest.conf webcam.conf useful_macros.cfg homing.cfg loadcells_zoffset.cfg ${probe}_macro.cfg ${probe}.cfg; do
+  for file in printer.cfg start_end.cfg ${probe}.conf spoolman.conf timelapse.conf moonraker.conf crowsnest.conf webcam.conf useful_macros.cfg homing.cfg loadcells_zoffset.cfg loadcells_wipe.cfg ${probe}_macro.cfg ${probe}.cfg; do
     if [ -f $BASEDIR/printer_data/config/$file ]; then
       cp $BASEDIR/printer_data/config/$file $BASEDIR/pellcorp-backups/$file
     fi

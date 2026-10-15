@@ -42,6 +42,7 @@ class RpiLoadcellsZOffsetTest(unittest.TestCase):
             directory.mkdir(parents=True, exist_ok=True)
 
         shutil.copy(REPOSITORY_ROOT / "config" / "loadcells_zoffset.cfg", repository / "config")
+        shutil.copy(REPOSITORY_ROOT / "config" / "loadcells_wipe.cfg", repository / "config")
         shutil.copy(
             REPOSITORY_ROOT / "k1" / "patches" / "loadcells_zoffset.cfg.e3v3se",
             patch_dir,
@@ -81,6 +82,7 @@ class RpiLoadcellsZOffsetTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((base / "status").read_text(), "1")
         self.assertTrue((base / "printer_data" / "config" / "loadcells_zoffset.cfg").is_file())
+        self.assertTrue((base / "printer_data" / "config" / "loadcells_wipe.cfg").is_file())
         self.assertIn("loadcells-zoffset", (base / "pellcorp.done").read_text().splitlines())
 
         helper_calls = calls.read_text().splitlines()
@@ -90,6 +92,7 @@ class RpiLoadcellsZOffsetTest(unittest.TestCase):
             helper_calls,
         )
         self.assertIn('--add-include loadcells_zoffset.cfg', helper_calls)
+        self.assertIn('--add-include loadcells_wipe.cfg', helper_calls)
         self.assertIn('--remove-include btteddy_zoffset.cfg', helper_calls)
         self.assertIn('--remove-section load_cell_probe', helper_calls)
         self.assertIn('--add-section load_cell_probe', helper_calls)
@@ -229,6 +232,10 @@ class RpiLoadcellsZOffsetTest(unittest.TestCase):
                 repository / "config",
             )
             shutil.copy(
+                REPOSITORY_ROOT / "config" / "loadcells_wipe.cfg",
+                repository / "config",
+            )
+            shutil.copy(
                 REPOSITORY_ROOT / "k1" / "patches" / "loadcells_zoffset.cfg.e3v3se",
                 patch_dir,
             )
@@ -269,7 +276,12 @@ class RpiLoadcellsZOffsetTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((base / "status").read_text(), "1")
             self.assertEqual(events.read_text().splitlines()[0], "backup --create")
-            for filename in ("printer.cfg", "bltouch.cfg", "loadcells_zoffset.cfg"):
+            for filename in (
+                "printer.cfg",
+                "bltouch.cfg",
+                "loadcells_zoffset.cfg",
+                "loadcells_wipe.cfg",
+            ):
                 self.assertTrue((backups_dir / filename).is_file(), filename)
 
     def test_enabled_state_is_restored_from_install_marker(self):
